@@ -1,0 +1,5 @@
+declare module 'node-os-utils'
+declare module 'node-wifi'
+declare module 'speedtest-net'
+declare module 'arp-a'
+declare module 'ping'
