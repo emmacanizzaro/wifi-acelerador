@@ -107,5 +107,12 @@ test('marks stable network when no sustained incident exists', () => {
     processes: [createProcess({ estimatedUsageScore: 3, name: 'finder', activeConnections: 2 })],
   })
 
-  assert.ok(recommendations.some((item) => item.id === 'network-stable'))
+  const stable = recommendations.find((item) => item.id === 'network-stable')
+  assert.ok(stable)
+  assert.ok(typeof stable.telemetry?.incidentScore === 'number')
+  assert.ok(
+    stable.telemetry?.trend === 'stable' ||
+      stable.telemetry?.trend === 'improving' ||
+      stable.telemetry?.trend === 'degrading',
+  )
 })

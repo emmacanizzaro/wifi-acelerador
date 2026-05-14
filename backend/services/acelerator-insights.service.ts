@@ -1,6 +1,8 @@
 import {
     AceleratorInsightRecommendation,
     DeviceInfo,
+    InsightRootCauseKey,
+    InsightTrend,
     NetworkMetrics,
     ProcessUsage,
 } from '../../shared/types/network';
@@ -18,6 +20,7 @@ export class AceleratorInsightsService {
   private smoothedJitterMs: number | null = null
   private smoothedHealthScore: number | null = null
   private incidentStreak = 0
+  private readonly incidentHistory: number[] = []
 
   analyze(input: {
     metrics: NetworkMetrics | null
@@ -40,15 +43,23 @@ export class AceleratorInsightsService {
     const { metrics, devices, processes } = input
     const heavyProcess = processes[0]
     const smoothed = this.updateSmoothedMetrics(metrics)
-    const incidentScore = this.computeIncidentScore({
+    const risk = this.computeIncidentScore({
       metrics,
       smoothed,
       devicesCount: devices.length,
       heavyProcess,
     })
+    const incidentScore = risk.incidentScore
     const persistentIncident = this.updateIncidentStreak(incidentScore)
+    const trend = this.updateTrend(incidentScore)
     const recommendations: AceleratorInsightRecommendation[] = []
     const now = Date.now()
+    const telemetry = {
+      incidentScore,
+      trend: trend.value,
+      trendDelta: trend.delta,
+      rootCauseScores: risk.rootCauseScores,
+    }
 
     const uploadSaturation =
       metrics.uploadMbps <= 1.8 &&
@@ -75,6 +86,7 @@ export class AceleratorInsightsService {
         message:
           'La red mantiene degradacion severa en varias muestras consecutivas. Ejecuta limpieza inteligente ahora y revisa canal/interferencias del router.',
         suggestedAction: 'turbo_boost',
+        telemetry,
         createdAt: now,
       })
     }
@@ -87,6 +99,7 @@ export class AceleratorInsightsService {
         message:
           'La subida disponible es baja frente al uso observado y un proceso local esta empujando trafico de forma sostenida. Pausa sincronizaciones pesadas.',
         suggestedAction: 'turbo_boost',
+        telemetry,
         createdAt: now,
       })
     }
@@ -99,6 +112,7 @@ export class AceleratorInsightsService {
         message:
           'El ping se mantiene alto con jitter controlado, patron tipico de congestion externa/ISP. Ejecuta speed test y compara por horario.',
         suggestedAction: 'speed_test',
+        telemetry,
         createdAt: now,
       })
     }
@@ -111,6 +125,7 @@ export class AceleratorInsightsService {
         message:
           'El jitter alto coincide con muchos dispositivos/procesos activos, lo que indica contencion local. Segmenta IoT/invitados y prioriza dispositivos criticos.',
         suggestedAction: 'restart_adapter',
+        telemetry,
         createdAt: now,
       })
     }
@@ -122,6 +137,7 @@ export class AceleratorInsightsService {
         title: 'Latencia elevada detectada (persistente)',
         message: `La latencia elevada se mantiene en el tiempo (score ${incidentScore}/100). Se recomienda mitigacion activa para evitar microcortes.`,
         suggestedAction: 'turbo_boost',
+        telemetry,
         createdAt: now,
       })
     }
@@ -133,6 +149,7 @@ export class AceleratorInsightsService {
         title: 'Pico transitorio detectado',
         message:
           'Se detecto una variacion puntual pero aun no sostenida. Manteniendo observacion para confirmar si evoluciona a incidencia real.',
+        telemetry,
         createdAt: now,
       })
     }
@@ -144,6 +161,7 @@ export class AceleratorInsightsService {
         title: 'Alta densidad de dispositivos',
         message:
           'Hay demasiados dispositivos conectados para una red domestica media. Considera segmentar por banda o crear red de invitados.',
+        telemetry,
         createdAt: now,
       })
     }
@@ -155,6 +173,7 @@ export class AceleratorInsightsService {
         title: 'Consumo elevado en proceso local',
         message: `El proceso ${heavyProcess.name} concentra la mayor actividad de red. Evalua si requiere limitacion o cierre temporal.`,
         suggestedAction: 'clear_network_cache',
+        telemetry,
         createdAt: now,
       })
     }
@@ -165,6 +184,7 @@ export class AceleratorInsightsService {
         level: 'info',
         title: 'Estado de red estable',
         message: `No se detectan problemas sostenidos. Señal compuesta actual: ${round(incidentScore, 0)}/100 de riesgo.`,
+        telemetry,
         createdAt: now,
       })
     }
@@ -206,7 +226,10 @@ export class AceleratorInsightsService {
     smoothed: { pingMs: number; jitterMs: number; healthScore: number }
     devicesCount: number
     heavyProcess?: ProcessUsage
-  }): number {
+  }): {
+    incidentScore: number
+    rootCauseScores: Partial<Record<InsightRootCauseKey, number>>
+  } {
     const { metrics, smoothed, devicesCount, heavyProcess } = input
 
     const healthRisk = clamp(((55 - smoothed.healthScore) / 55) * 42, 0, 42)
@@ -217,7 +240,52 @@ export class AceleratorInsightsService {
 
     const processRisk = clamp(((heavyProcess?.estimatedUsageScore ?? 0) - 8) * 0.55, 0, 6)
 
-    return round(healthRisk + pingRisk + jitterRisk + loadRisk + crowdRisk + processRisk, 0)
+    const rootCauseScores: Partial<Record<InsightRootCauseKey, number>> = {
+      health: round(healthRisk, 0),
+      latency: round(pingRisk, 0),
+      jitter: round(jitterRisk, 0),
+      upload: round(loadRisk, 0),
+      device_contention: round(crowdRisk, 0),
+      local_process: round(processRisk, 0),
+    }
+
+    return {
+      incidentScore: clamp(
+        round(healthRisk + pingRisk + jitterRisk + loadRisk + crowdRisk + processRisk, 0),
+        0,
+        100,
+      ),
+      rootCauseScores,
+    }
+  }
+
+  private updateTrend(score: number): { value: InsightTrend; delta: number } {
+    this.incidentHistory.push(score)
+    if (this.incidentHistory.length > 6) {
+      this.incidentHistory.shift()
+    }
+
+    if (this.incidentHistory.length < 4) {
+      return { value: 'stable', delta: 0 }
+    }
+
+    const pivot = Math.floor(this.incidentHistory.length / 2)
+    const previous = this.incidentHistory.slice(0, pivot)
+    const recent = this.incidentHistory.slice(pivot)
+
+    const previousAvg = previous.reduce((sum, item) => sum + item, 0) / previous.length
+    const recentAvg = recent.reduce((sum, item) => sum + item, 0) / recent.length
+    const delta = round(recentAvg - previousAvg, 1)
+
+    if (delta >= 6) {
+      return { value: 'degrading', delta }
+    }
+
+    if (delta <= -6) {
+      return { value: 'improving', delta }
+    }
+
+    return { value: 'stable', delta }
   }
 
   private updateIncidentStreak(incidentScore: number): boolean {

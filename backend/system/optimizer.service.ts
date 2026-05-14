@@ -28,6 +28,32 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function toError(reason: unknown, fallbackMessage: string): Error {
+  if (reason instanceof Error) return reason
+  if (typeof reason === 'string' && reason.trim().length > 0) {
+    return new Error(reason)
+  }
+
+  return new Error(fallbackMessage)
+}
+
+function isSpeedTestCrashError(reason: unknown): boolean {
+  const message =
+    reason instanceof Error
+      ? `${reason.message}\n${reason.stack ?? ''}`
+      : typeof reason === 'string'
+        ? reason
+        : ''
+
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('speedtest-net') ||
+    normalized.includes('no server found') ||
+    normalized.includes('xml2js') ||
+    normalized.includes('sax/lib/sax')
+  )
+}
+
 export class OptimizerService {
   async run(action: OptimizationAction): Promise<OptimizationActionResult> {
     const start = Date.now()
@@ -211,38 +237,88 @@ export class OptimizerService {
   }
 
   private async executeSpeedTestSafely(): Promise<unknown> {
-    const probe = speedTest({
-      acceptLicense: true,
-      acceptGdpr: true,
-    }) as unknown
-
-    if (!isObject(probe) || typeof probe.then !== 'function' || typeof probe.on !== 'function') {
-      return probe
-    }
-
     return await new Promise((resolve, reject) => {
+      let settled = false
+      let timeoutHandle: NodeJS.Timeout | null = null
+
+      const cleanup = () => {
+        process.removeListener('uncaughtException', onUncaughtException)
+        process.removeListener('unhandledRejection', onUnhandledRejection)
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle)
+          timeoutHandle = null
+        }
+      }
+
+      const settleResolve = (value: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(value)
+      }
+
+      const settleReject = (reason: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(toError(reason, 'Unknown speed test error'))
+      }
+
+      const onUncaughtException = (error: Error) => {
+        if (!isSpeedTestCrashError(error)) {
+          return
+        }
+        settleReject(error)
+      }
+
+      const onUnhandledRejection = (reason: unknown) => {
+        if (!isSpeedTestCrashError(reason)) {
+          return
+        }
+        settleReject(reason)
+      }
+
+      process.prependListener('uncaughtException', onUncaughtException)
+      process.prependListener('unhandledRejection', onUnhandledRejection)
+
+      timeoutHandle = setTimeout(() => {
+        settleReject(new Error('Speed test timeout after 20s'))
+      }, 20_000)
+
+      let probe: unknown
+      try {
+        probe = speedTest({
+          acceptLicense: true,
+          acceptGdpr: true,
+          maxTime: 15_000,
+        }) as unknown
+      } catch (error) {
+        settleReject(error)
+        return
+      }
+
+      if (!isObject(probe) || typeof probe.then !== 'function' || typeof probe.on !== 'function') {
+        settleResolve(probe)
+        return
+      }
+
       const eventSource = probe as {
         then: (
           onFulfilled: (value: unknown) => void,
           onRejected?: (reason: unknown) => void,
         ) => void
         on: (eventName: string, handler: (value: unknown) => void) => void
+        once?: (eventName: string, handler: (value: unknown) => void) => void
       }
 
-      let settled = false
-      const settleResolve = (value: unknown) => {
-        if (settled) return
-        settled = true
-        resolve(value)
-      }
-      const settleReject = (reason: unknown) => {
-        if (settled) return
-        settled = true
-        reject(reason)
+      if (typeof eventSource.once === 'function') {
+        eventSource.once('error', settleReject)
+        eventSource.once('data', settleResolve)
+      } else {
+        eventSource.on('error', settleReject)
+        eventSource.on('data', settleResolve)
       }
 
-      eventSource.on('error', settleReject)
-      eventSource.on('data', settleResolve)
       eventSource.then(settleResolve, settleReject)
     })
   }

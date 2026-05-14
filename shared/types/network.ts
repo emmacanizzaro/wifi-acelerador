@@ -53,12 +53,30 @@ export interface AutoRecoverySettings {
   cooldownMs: number
 }
 
+export type InsightTrend = 'improving' | 'stable' | 'degrading'
+
+export type InsightRootCauseKey =
+  | 'health'
+  | 'latency'
+  | 'jitter'
+  | 'upload'
+  | 'device_contention'
+  | 'local_process'
+
+export interface InsightTelemetry {
+  incidentScore: number
+  trend: InsightTrend
+  trendDelta: number
+  rootCauseScores: Partial<Record<InsightRootCauseKey, number>>
+}
+
 export interface AceleratorInsightRecommendation {
   id: string
   level: 'info' | 'warning' | 'critical'
   title: string
   message: string
   suggestedAction?: OptimizationAction
+  telemetry?: InsightTelemetry
   createdAt: number
 }
 
