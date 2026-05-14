@@ -45,11 +45,20 @@ export type OptimizationAction =
   | 'restart_adapter'
   | 'speed_test'
 
+export interface AutoRecoverySettings {
+  enabled: boolean
+  healthThreshold: number
+  pingThreshold: number
+  jitterThreshold: number
+  cooldownMs: number
+}
+
 export interface AceleratorInsightRecommendation {
   id: string
   level: 'info' | 'warning' | 'critical'
   title: string
   message: string
+  suggestedAction?: OptimizationAction
   createdAt: number
 }
 

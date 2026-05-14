@@ -2,6 +2,7 @@ import React, { createContext, useEffect, useMemo, useState } from 'react';
 import { SOCKET_EVENTS } from '../../../shared/constants/network';
 import {
     AceleratorInsightRecommendation,
+    AutoRecoverySettings,
     DeviceInfo,
     HistoricalPoint,
     NetworkMetrics,
@@ -19,9 +20,11 @@ interface RealtimeDataState {
   recommendations: AceleratorInsightRecommendation[]
   logs: Array<{ level: 'info' | 'warn' | 'error'; message: string; timestamp: number }>
   lastActionResult: OptimizationActionResult | null
+  autoRecoverySettings: AutoRecoverySettings
   loading: boolean
   error: string | null
   runAction: (action: OptimizationAction) => void
+  updateAutoRecoverySettings: (settings: Partial<AutoRecoverySettings>) => void
 }
 
 export const RealtimeDataContext = createContext<RealtimeDataState | null>(null)
@@ -36,6 +39,13 @@ export function RealtimeDataProvider({ children }: { children: React.ReactNode }
     Array<{ level: 'info' | 'warn' | 'error'; message: string; timestamp: number }>
   >([])
   const [lastActionResult, setLastActionResult] = useState<OptimizationActionResult | null>(null)
+  const [autoRecoverySettings, setAutoRecoverySettings] = useState<AutoRecoverySettings>({
+    enabled: true,
+    healthThreshold: 38,
+    pingThreshold: 95,
+    jitterThreshold: 24,
+    cooldownMs: 3 * 60 * 1000,
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -74,6 +84,8 @@ export function RealtimeDataProvider({ children }: { children: React.ReactNode }
       )
     })
 
+    socket.on(SOCKET_EVENTS.AUTO_RECOVERY_SETTINGS, setAutoRecoverySettings)
+
     socket.on(SOCKET_EVENTS.SERVER_LOG, (payload) => {
       setLogs((prev) => [payload, ...prev].slice(0, 120))
     })
@@ -95,6 +107,7 @@ export function RealtimeDataProvider({ children }: { children: React.ReactNode }
       socket.off(SOCKET_EVENTS.PROCESSES_UPDATE)
       socket.off(SOCKET_EVENTS.ACELERATOR_INSIGHTS_UPDATE)
       socket.off(SOCKET_EVENTS.OPTIMIZER_RESULT)
+      socket.off(SOCKET_EVENTS.AUTO_RECOVERY_SETTINGS)
       socket.off(SOCKET_EVENTS.SERVER_LOG)
       socket.off(SOCKET_EVENTS.SERVER_ERROR)
     }
@@ -109,12 +122,26 @@ export function RealtimeDataProvider({ children }: { children: React.ReactNode }
       recommendations,
       logs,
       lastActionResult,
+      autoRecoverySettings,
       loading,
       error,
       runAction: (action: OptimizationAction) =>
         socket.emit(SOCKET_EVENTS.OPTIMIZER_RUN, { action }),
+      updateAutoRecoverySettings: (settings: Partial<AutoRecoverySettings>) =>
+        socket.emit(SOCKET_EVENTS.AUTO_RECOVERY_UPDATE_SETTINGS, settings),
     }),
-    [metrics, history, devices, processes, recommendations, logs, lastActionResult, loading, error],
+    [
+      metrics,
+      history,
+      devices,
+      processes,
+      recommendations,
+      logs,
+      lastActionResult,
+      autoRecoverySettings,
+      loading,
+      error,
+    ],
   )
 
   return <RealtimeDataContext.Provider value={value}>{children}</RealtimeDataContext.Provider>

@@ -2,7 +2,7 @@ import { RecommendationsPanel } from '../components/RecommendationsPanel';
 import { useRealtimeData } from '../hooks/useRealtimeData';
 
 export function InsightsPage(): JSX.Element {
-  const { recommendations, loading, error } = useRealtimeData()
+  const { recommendations, loading, error, runAction } = useRealtimeData()
 
   if (loading && !recommendations) {
     return (
@@ -20,5 +20,5 @@ export function InsightsPage(): JSX.Element {
     )
   }
 
-  return <RecommendationsPanel recommendations={recommendations} />
+  return <RecommendationsPanel recommendations={recommendations} runAction={runAction} />
 }

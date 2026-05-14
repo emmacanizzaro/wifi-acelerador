@@ -15,8 +15,17 @@ interface SpeedSnapshot {
   pingMs: number
 }
 
+interface MacWifiContext {
+  device: string
+  service: string
+}
+
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 export class OptimizerService {
@@ -57,19 +66,31 @@ export class OptimizerService {
 
   private async runSystemAction(action: SystemOptimizationAction): Promise<string> {
     const platform = process.platform
-    const commands = this.getCommands(platform, action)
+    const commands = await this.getCommands(platform, action)
 
     if (!commands.length) {
       throw new Error(`No command mapped for ${action} on ${platform}`)
     }
 
+    let successCount = 0
     const outputs: string[] = []
+
     for (const command of commands) {
-      const { stdout, stderr } = await execAsync(command)
-      outputs.push(`$ ${command}\n${stdout || ''}${stderr || ''}`.trim())
+      const result = await this.runCommand(command)
+      if (result.success) {
+        successCount += 1
+      }
+      outputs.push(result.output)
     }
 
-    return outputs.join('\n\n')
+    if (successCount === 0) {
+      throw new Error(outputs.join('\n\n'))
+    }
+
+    return [
+      `${successCount}/${commands.length} comandos ejecutados correctamente.`,
+      ...outputs,
+    ].join('\n\n')
   }
 
   private async runTurboBoost(): Promise<string> {
@@ -78,6 +99,7 @@ export class OptimizerService {
       { action: 'flush_dns', label: 'Flush DNS' },
       { action: 'clear_network_cache', label: 'Limpiar cache de red' },
       { action: 'renew_ip', label: 'Renovar IP' },
+      { action: 'restart_adapter', label: 'Reiniciar adaptador' },
     ]
 
     let baseline: SpeedSnapshot | null = null
@@ -96,9 +118,10 @@ export class OptimizerService {
 
     for (const step of steps) {
       try {
-        await this.runSystemAction(step.action)
+        const stepOutput = await this.runSystemAction(step.action)
         successCount += 1
         report.push(`${step.label}: ok`)
+        report.push(stepOutput)
       } catch (error) {
         report.push(
           `${step.label}: fallo (${error instanceof Error ? error.message : 'Unknown command error'})`,
@@ -148,30 +171,35 @@ export class OptimizerService {
   }
 
   private async runSpeedTestSnapshot(): Promise<SpeedSnapshot> {
-    let result: Awaited<ReturnType<typeof speedTest>>
+    let result: unknown
 
     try {
-      result = await speedTest({
-        acceptLicense: true,
-        acceptGdpr: true,
-      })
+      result = await this.executeSpeedTestSafely()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown speed test error'
       throw new Error(`Speed test failed: ${message}`)
     }
 
-    const downloadBandwidth = toFiniteNumber(result?.download?.bandwidth)
-    const uploadBandwidth = toFiniteNumber(result?.upload?.bandwidth)
-    const pingLatency = toFiniteNumber(result?.ping?.latency)
+    if (!isObject(result)) {
+      throw new Error('Speed test failed: invalid response payload')
+    }
+
+    const download = isObject(result.download) ? result.download : null
+    const upload = isObject(result.upload) ? result.upload : null
+    const ping = isObject(result.ping) ? result.ping : null
+    const server = isObject(result.server) ? result.server : null
+
+    const downloadBandwidth = toFiniteNumber(download?.bandwidth)
+    const uploadBandwidth = toFiniteNumber(upload?.bandwidth)
+    const pingLatency = toFiniteNumber(ping?.latency)
 
     if (downloadBandwidth === null || uploadBandwidth === null || pingLatency === null) {
       throw new Error('Speed test failed: incomplete measurement data from provider')
     }
 
-    const serverName = typeof result?.server?.name === 'string' ? result.server.name : 'Unknown'
-    const serverLocation =
-      typeof result?.server?.location === 'string' ? result.server.location : 'Unknown'
-    const isp = typeof result?.isp === 'string' ? result.isp : 'Unknown ISP'
+    const serverName = typeof server?.name === 'string' ? server.name : 'Unknown'
+    const serverLocation = typeof server?.location === 'string' ? server.location : 'Unknown'
+    const isp = typeof result.isp === 'string' ? result.isp : 'Unknown ISP'
 
     return {
       server: `${serverName} (${serverLocation})`,
@@ -182,29 +210,151 @@ export class OptimizerService {
     }
   }
 
+  private async executeSpeedTestSafely(): Promise<unknown> {
+    const probe = speedTest({
+      acceptLicense: true,
+      acceptGdpr: true,
+    }) as unknown
+
+    if (!isObject(probe) || typeof probe.then !== 'function' || typeof probe.on !== 'function') {
+      return probe
+    }
+
+    return await new Promise((resolve, reject) => {
+      const eventSource = probe as {
+        then: (
+          onFulfilled: (value: unknown) => void,
+          onRejected?: (reason: unknown) => void,
+        ) => void
+        on: (eventName: string, handler: (value: unknown) => void) => void
+      }
+
+      let settled = false
+      const settleResolve = (value: unknown) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+      const settleReject = (reason: unknown) => {
+        if (settled) return
+        settled = true
+        reject(reason)
+      }
+
+      eventSource.on('error', settleReject)
+      eventSource.on('data', settleResolve)
+      eventSource.then(settleResolve, settleReject)
+    })
+  }
+
   private formatSpeedSnapshot(snapshot: SpeedSnapshot): string {
     return `Download ${snapshot.downloadMbps.toFixed(2)} Mbps | Upload ${snapshot.uploadMbps.toFixed(2)} Mbps | Ping ${snapshot.pingMs.toFixed(1)} ms`
   }
 
-  private getCommands(platform: NodeJS.Platform, action: SystemOptimizationAction): string[] {
+  private async runCommand(command: string): Promise<{ success: boolean; output: string }> {
+    try {
+      const { stdout, stderr } = await execAsync(command, { timeout: 20_000 })
+      const body = `${stdout || ''}${stderr || ''}`.trim()
+      return {
+        success: true,
+        output: `[ok] $ ${command}${body ? `\n${body}` : ''}`,
+      }
+    } catch (error) {
+      const typedError = error as Error & { stdout?: string; stderr?: string }
+      const details = `${typedError.stdout || ''}${typedError.stderr || ''}`.trim()
+      const message = details || typedError.message || 'Unknown command error'
+
+      return {
+        success: false,
+        output: `[fail] $ ${command}\n${message}`,
+      }
+    }
+  }
+
+  private async resolveMacWifiContext(): Promise<MacWifiContext> {
+    const fallback: MacWifiContext = {
+      device: 'en0',
+      service: 'Wi-Fi',
+    }
+
+    try {
+      const { stdout } = await execAsync('networksetup -listallhardwareports', { timeout: 10_000 })
+      const lines = stdout.split('\n')
+
+      let currentPort: string | null = null
+      for (const rawLine of lines) {
+        const line = rawLine.trim()
+        if (!line) {
+          currentPort = null
+          continue
+        }
+
+        if (line.startsWith('Hardware Port:')) {
+          currentPort = line.replace('Hardware Port:', '').trim()
+          continue
+        }
+
+        if (line.startsWith('Device:') && currentPort) {
+          const device = line.replace('Device:', '').trim()
+          const normalizedPort = currentPort.toLowerCase()
+          if (
+            normalizedPort.includes('wi-fi') ||
+            normalizedPort.includes('wifi') ||
+            normalizedPort.includes('airport')
+          ) {
+            return {
+              device,
+              service: currentPort,
+            }
+          }
+        }
+      }
+    } catch {
+      return fallback
+    }
+
+    return fallback
+  }
+
+  private async getCommands(
+    platform: NodeJS.Platform,
+    action: SystemOptimizationAction,
+  ): Promise<string[]> {
+    if (platform === 'darwin') {
+      const wifi = await this.resolveMacWifiContext()
+
+      const darwinCommandMap: Record<SystemOptimizationAction, string[]> = {
+        flush_dns: ['dscacheutil -flushcache', 'killall -HUP mDNSResponder'],
+        renew_ip: [`ipconfig set ${wifi.device} DHCP`, `networksetup -renewdhcp "${wifi.service}"`],
+        clear_network_cache: [
+          'route -n flush',
+          'arp -a -d',
+          'dscacheutil -flushcache',
+          'killall -HUP mDNSResponder',
+        ],
+        restart_adapter: [
+          `networksetup -setairportpower ${wifi.device} off`,
+          `networksetup -setairportpower ${wifi.device} on`,
+        ],
+      }
+
+      return darwinCommandMap[action] ?? []
+    }
+
     const commandMap: Record<
       SystemOptimizationAction,
       Partial<Record<NodeJS.Platform, string[]>>
     > = {
       flush_dns: {
-        darwin: ['dscacheutil -flushcache', 'sudo killall -HUP mDNSResponder'],
         win32: ['ipconfig /flushdns'],
       },
       renew_ip: {
-        darwin: ['ipconfig set en0 DHCP'],
         win32: ['ipconfig /release', 'ipconfig /renew'],
       },
       clear_network_cache: {
-        darwin: ['sudo route -n flush'],
         win32: ['netsh int ip reset', 'netsh winsock reset'],
       },
       restart_adapter: {
-        darwin: ['networksetup -setairportpower en0 off', 'networksetup -setairportpower en0 on'],
         win32: [
           'netsh interface set interface name=\"Wi-Fi\" admin=disable',
           'netsh interface set interface name=\"Wi-Fi\" admin=enable',

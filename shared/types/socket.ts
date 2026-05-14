@@ -1,5 +1,6 @@
 import {
     AceleratorInsightRecommendation,
+    AutoRecoverySettings,
     DeviceInfo,
     HistoricalPoint,
     NetworkMetrics,
@@ -20,10 +21,12 @@ export interface ServerToClientEvents {
     message: string
     timestamp: number
   }) => void
+  'auto-recovery:settings': (payload: AutoRecoverySettings) => void
   'server:error': (payload: { message: string }) => void
 }
 
 export interface ClientToServerEvents {
   'optimizer:run': (payload: { action: OptimizationAction }) => void
+  'auto-recovery:update_settings': (payload: Partial<AutoRecoverySettings>) => void
   'dashboard:request_snapshot': () => void
 }

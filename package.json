@@ -7,6 +7,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "npm run dev:clean-ports && npm run build:electron && concurrently -k \"npm:dev:frontend\" \"npm:dev:backend\" \"npm:dev:electron\"",
+    "dev:mobile": "npm run dev:clean-ports && concurrently -k \"npm:dev:frontend\" \"npm:dev:backend\"",
     "dev:clean-ports": "kill-port 5173 4000 || true",
     "dev:frontend": "vite --config frontend/vite.config.ts",
     "dev:backend": "tsx watch backend/server.ts",
@@ -17,6 +18,7 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "start": "cross-env NODE_ENV=production electron dist/electron/main.js",
     "package": "npm run build && electron-builder",
+    "test:backend": "tsx --test backend/**/*.test.ts",
     "typecheck": "npm run typecheck:frontend && npm run typecheck:backend && npm run typecheck:electron",
     "typecheck:frontend": "tsc -p frontend/tsconfig.json --noEmit",
     "typecheck:backend": "tsc -p backend/tsconfig.json --noEmit",

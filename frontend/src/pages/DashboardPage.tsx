@@ -11,7 +11,7 @@ import { RecommendationsPanel } from '../components/RecommendationsPanel';
 import { useRealtimeData } from '../hooks/useRealtimeData';
 
 const actionLabel: Record<string, string> = {
-  turbo_boost: 'Modo Turbo 1-Clic',
+  turbo_boost: 'Limpieza Inteligente 1-Clic',
   flush_dns: 'Flush DNS',
   renew_ip: 'Renovar IP',
   clear_network_cache: 'Limpiar cache de red',
@@ -73,6 +73,8 @@ export function DashboardPage(): JSX.Element {
     recommendations,
     logs,
     runAction,
+    autoRecoverySettings,
+    updateAutoRecoverySettings,
     loading,
     error,
     lastActionResult,
@@ -211,6 +213,8 @@ export function DashboardPage(): JSX.Element {
       <section className="grid gap-4 xl:grid-cols-2">
         <OptimizerPanel
           runAction={runAction}
+          autoRecoverySettings={autoRecoverySettings}
+          updateAutoRecoverySettings={updateAutoRecoverySettings}
           logText={logs
             .slice(0, 20)
             .map(
@@ -219,7 +223,7 @@ export function DashboardPage(): JSX.Element {
             )
             .join('\n')}
         />
-        <RecommendationsPanel recommendations={recommendations} />
+        <RecommendationsPanel recommendations={recommendations} runAction={runAction} />
       </section>
     </motion.div>
   )

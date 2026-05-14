@@ -8,6 +8,8 @@ export const SOCKET_EVENTS = {
   SERVER_LOG: 'server:log',
   SERVER_ERROR: 'server:error',
   OPTIMIZER_RUN: 'optimizer:run',
+  AUTO_RECOVERY_SETTINGS: 'auto-recovery:settings',
+  AUTO_RECOVERY_UPDATE_SETTINGS: 'auto-recovery:update_settings',
   DASHBOARD_REQUEST_SNAPSHOT: 'dashboard:request_snapshot',
 } as const
 

@@ -36,6 +36,7 @@ export class AceleratorInsightsService {
         title: 'Causa raiz: subida saturada',
         message:
           'La subida disponible es baja frente al uso detectado. Evita backups/sincronizacion temporalmente y prioriza trafico interactivo.',
+        suggestedAction: 'turbo_boost',
         createdAt: Date.now(),
       })
     }
@@ -47,6 +48,7 @@ export class AceleratorInsightsService {
         title: 'Causa raiz: latencia aguas arriba',
         message:
           'El ping esta alto con jitter moderado, lo que sugiere congestion externa o del ISP. Prueba en otro horario y compara.',
+        suggestedAction: 'speed_test',
         createdAt: Date.now(),
       })
     }
@@ -58,6 +60,7 @@ export class AceleratorInsightsService {
         title: 'Causa raiz: contencion por dispositivos',
         message:
           'Hay muchos equipos activos durante una ventana de latencia alta. Considera banda separada para IoT e invitados.',
+        suggestedAction: 'restart_adapter',
         createdAt: Date.now(),
       })
     }
@@ -69,6 +72,7 @@ export class AceleratorInsightsService {
         title: 'Latencia elevada detectada',
         message:
           'Tu red tiene latencia y jitter altos. Revisa interferencias y evita descargas simultaneas.',
+        suggestedAction: 'turbo_boost',
         createdAt: Date.now(),
       })
     }
@@ -90,6 +94,7 @@ export class AceleratorInsightsService {
         level: 'info',
         title: 'Consumo elevado en proceso local',
         message: `El proceso ${heavyProcess.name} concentra la mayor actividad de red. Evalua si requiere limitacion o cierre temporal.`,
+        suggestedAction: 'clear_network_cache',
         createdAt: Date.now(),
       })
     }
@@ -101,6 +106,7 @@ export class AceleratorInsightsService {
         title: 'Salud WiFi critica',
         message:
           'Se recomienda reiniciar el router y revisar canal WiFi, especialmente en 2.4GHz si hay saturacion.',
+        suggestedAction: 'turbo_boost',
         createdAt: Date.now(),
       })
     }
